@@ -27,6 +27,7 @@ import android.support.annotation.Nullable;
 import java.util.Iterator;
 import java.util.Map;
 
+import static android.arch.lifecycle.Lifecycle.State.CREATED;
 import static android.arch.lifecycle.Lifecycle.State.DESTROYED;
 import static android.arch.lifecycle.Lifecycle.State.STARTED;
 
@@ -51,18 +52,19 @@ public abstract class LiveEvent<T> {
     private boolean mDispatchingValue;
     @SuppressWarnings("FieldCanBeLocal")
     private boolean mDispatchInvalidated;
-    private final Runnable mPostValueRunnable = new Runnable() {
+
+    private class PostValueTask implements Runnable {
+        private Object newValue;
+
+        public PostValueTask(@NonNull Object newValue) {
+            this.newValue = newValue;
+        }
+
         @Override
         public void run() {
-            Object newValue;
-            synchronized (mDataLock) {
-                newValue = mPendingData;
-                mPendingData = NOT_SET;
-            }
-            //noinspection unchecked
             setValue((T) newValue);
         }
-    };
+    }
 
     private void considerNotify(ObserverWrapper observer) {
         if (!observer.mActive) {
@@ -144,6 +146,25 @@ public abstract class LiveEvent<T> {
             return;
         }
         LifecycleBoundObserver wrapper = new LifecycleBoundObserver(owner, observer);
+        wrapper.mLastVersion = getVersion();
+        ObserverWrapper existing = mObservers.putIfAbsent(observer, wrapper);
+        if (existing != null && !existing.isAttachedTo(owner)) {
+            throw new IllegalArgumentException("Cannot add the same observer"
+                    + " with different lifecycles");
+        }
+        if (existing != null) {
+            return;
+        }
+        owner.getLifecycle().addObserver(wrapper);
+    }
+
+    @MainThread
+    public void observeSticky(@NonNull LifecycleOwner owner, @NonNull Observer<T> observer) {
+        if (owner.getLifecycle().getCurrentState() == DESTROYED) {
+            // ignore
+            return;
+        }
+        LifecycleBoundObserver wrapper = new LifecycleBoundObserver(owner, observer);
         ObserverWrapper existing = mObservers.putIfAbsent(observer, wrapper);
         if (existing != null && !existing.isAttachedTo(owner)) {
             throw new IllegalArgumentException("Cannot add the same observer"
@@ -171,6 +192,21 @@ public abstract class LiveEvent<T> {
      */
     @MainThread
     public void observeForever(@NonNull Observer<T> observer) {
+        AlwaysActiveObserver wrapper = new AlwaysActiveObserver(observer);
+        wrapper.mLastVersion = getVersion();
+        ObserverWrapper existing = mObservers.putIfAbsent(observer, wrapper);
+        if (existing != null && existing instanceof LiveEvent.LifecycleBoundObserver) {
+            throw new IllegalArgumentException("Cannot add the same observer"
+                    + " with different lifecycles");
+        }
+        if (existing != null) {
+            return;
+        }
+        wrapper.activeStateChanged(true);
+    }
+
+    @MainThread
+    public void observeStickyForever(@NonNull Observer<T> observer) {
         AlwaysActiveObserver wrapper = new AlwaysActiveObserver(observer);
         ObserverWrapper existing = mObservers.putIfAbsent(observer, wrapper);
         if (existing != null && existing instanceof LiveEvent.LifecycleBoundObserver) {
@@ -230,16 +266,8 @@ public abstract class LiveEvent<T> {
      *
      * @param value The new value
      */
-    protected void postValue(T value) {
-        boolean postTask;
-        synchronized (mDataLock) {
-            postTask = mPendingData == NOT_SET;
-            mPendingData = value;
-        }
-        if (!postTask) {
-            return;
-        }
-        MainThreadManager.getInstance().postToMainThread(mPostValueRunnable);
+    public void postValue(T value) {
+        MainThreadManager.getInstance().postToMainThread(new PostValueTask(value));
     }
 
     /**
@@ -251,7 +279,7 @@ public abstract class LiveEvent<T> {
      * @param value The new value
      */
     @MainThread
-    protected void setValue(T value) {
+    public void setValue(T value) {
         assertMainThread("setValue");
         mVersion++;
         mData = value;
@@ -322,6 +350,19 @@ public abstract class LiveEvent<T> {
         return mActiveCount > 0;
     }
 
+    /**
+     * determine when the observer is active, means the observer can receive message
+     * the default value is CREATED, means if the observer's state is above create,
+     * for example, the onCreate() of activity is called
+     * you can change this value to CREATED/STARTED/RESUMED
+     * determine on witch state, you can receive message
+     *
+     * @return
+     */
+    protected Lifecycle.State observerActiveLevel() {
+        return CREATED;
+    }
+
     class LifecycleBoundObserver extends ObserverWrapper implements GenericLifecycleObserver {
         @NonNull
         final LifecycleOwner mOwner;
@@ -333,7 +374,7 @@ public abstract class LiveEvent<T> {
 
         @Override
         boolean shouldBeActive() {
-            return mOwner.getLifecycle().getCurrentState().isAtLeast(STARTED);
+            return mOwner.getLifecycle().getCurrentState().isAtLeast(observerActiveLevel());
         }
 
         @Override

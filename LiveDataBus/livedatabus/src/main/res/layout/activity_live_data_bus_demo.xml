@@ -79,5 +79,12 @@
             android:onClick="@{()->handler.postValueCountTest()}"
             android:text="测试PostValue会丢失消息的问题" />
 
+        <Button
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:onClick="@{()->handler.testObserverActiveLevel()}"
+            android:text="测试Observer active level" />
+
     </LinearLayout>
 </layout>

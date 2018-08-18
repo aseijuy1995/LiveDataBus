@@ -67,6 +67,15 @@ public class LiveDataBusDemo extends AppCompatActivity {
                         receiveCount++;
                     }
                 });
+        LiveDataBus.get()
+                .with("key_active_level", String.class)
+                .observe(this, new Observer<String>() {
+                    @Override
+                    public void onChanged(@Nullable String s) {
+                        Toast.makeText(LiveDataBusDemo.this, "Receive message: " + s,
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
     }
 
     @Override
@@ -174,5 +183,9 @@ public class LiveDataBusDemo extends AppCompatActivity {
                         " | receiveCount: " + receiveCount, Toast.LENGTH_LONG).show();
             }
         }, 1000);
+    }
+
+    public void testObserverActiveLevel() {
+        startActivity(new Intent(this, ObserverActiveLevelActivity.class));
     }
 }
